@@ -4,12 +4,12 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, START, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import InMemorySaver
-from groq import BadRequestError
+
+from llm_config import get_llm
 
 from step4_tool import (web_search, fetch_url, calculator, wikipedia_lookup,
                         read_file, deep_crawl)
@@ -17,7 +17,7 @@ from step4_tool import (web_search, fetch_url, calculator, wikipedia_lookup,
 load_dotenv()
 
 tools = [web_search, fetch_url, calculator, wikipedia_lookup, read_file, deep_crawl]
-llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0)
+llm = get_llm()
 llm_with_tools = llm.bind_tools(tools)
 
 SYSTEM = SystemMessage(
@@ -36,8 +36,8 @@ def agent(state: MessagesState):
     for attempt in range(3):
         try:
             return {"messages": [llm_with_tools.invoke(msgs)]}
-        except BadRequestError as e:
-            if "tool_use_failed" in str(e) and attempt < 2:
+        except Exception as e:
+            if attempt < 2:
                 continue
             return {"messages": [AIMessage(
                 "I had trouble using my tools. Try rephrasing the question."

@@ -7,7 +7,7 @@ from operator import add
 from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
+from llm_config import get_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send  # the fan-out primitive
@@ -15,7 +15,7 @@ from langgraph.types import Send  # the fan-out primitive
 from step9_agent import app as research_agent
 
 load_dotenv()
-llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0)
+llm = get_llm()
 
 
 class State(TypedDict):

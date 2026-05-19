@@ -6,7 +6,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from typing import TypedDict
 
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
+from llm_config import get_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 
@@ -14,7 +14,7 @@ from step9_agent import app as research_agent  # reuse the tool-agent as a worke
 
 load_dotenv()
 
-llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0)
+llm = get_llm()
 
 
 # --- custom state: more than just messages now ---
