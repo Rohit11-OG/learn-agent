@@ -15,15 +15,14 @@ import requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
+from llm_config import get_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 
 load_dotenv()
 
-# temperature 0 -> factual, repeatable. swap model to "openai/gpt-oss-120b"
-# for stronger synthesis if your Groq rate limit allows.
-llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0)
+# model is configured in llm_config.py (NVIDIA NIM — Nemotron Super)
+llm = get_llm()
 
 MAX_SUBQUESTIONS = 5
 MAX_SOURCES_FETCHED = 6   # how many source pages to read in full
