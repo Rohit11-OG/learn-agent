@@ -7,8 +7,6 @@ actual source pages, then writes a structured report that cites every claim.
 """
 
 import sys
-sys.stdout.reconfigure(encoding="utf-8")
-
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 
@@ -17,6 +15,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 
 from agent import get_llm, _get_page  # reuse model config + cached fetcher
+
+sys.stdout.reconfigure(encoding="utf-8")
 
 # model is configured in agent.py (NVIDIA NIM — Nemotron Super)
 llm = get_llm()

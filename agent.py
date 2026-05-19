@@ -9,12 +9,10 @@ Sections:
   4. Web UI         — Gradio chat app (only built when run directly)
 """
 
-import sys
-sys.stdout.reconfigure(encoding="utf-8")
-
 import ast
 import operator
 import os
+import sys
 import time
 import uuid
 from collections import deque
@@ -29,9 +27,10 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.tools import tool
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langgraph.graph import StateGraph, START, END, MessagesState
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import InMemorySaver
 
+sys.stdout.reconfigure(encoding="utf-8")  # let Windows console print Unicode
 load_dotenv()  # loads NVIDIA_API_KEY from .env
 
 
