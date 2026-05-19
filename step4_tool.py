@@ -1,6 +1,11 @@
 """Agent tools: web search, fetch url, deep crawl, calculator, wikipedia,
 file reader, doc search (RAG). Docstrings are sharp on purpose -> the model
-reads them to pick the right tool."""
+reads them to pick the right tool.
+
+Optimizations:
+- one shared requests.Session  -> reuses TCP connections (faster)
+- in-memory caches              -> repeat searches/fetches return instantly
+"""
 
 import ast
 import operator
@@ -15,18 +20,52 @@ from bs4 import BeautifulSoup
 from langchain_core.tools import tool
 from ddgs import DDGS
 
+# --- shared HTTP session: one connection pool reused by every tool ---
+_session = requests.Session()
+_session.headers.update({"User-Agent": "Mozilla/5.0 (LearningAgent)"})
+
+# --- caches: avoid repeating the same network call ---
+_search_cache: dict[str, str] = {}
+_page_cache: dict[str, str] = {}
+
+
+def _clean_html(html: str, drop_extra=()) -> str:
+    """Strip tags/noise from HTML, return squashed plain text."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", *drop_extra]):
+        tag.decompose()
+    return " ".join(soup.get_text(separator=" ").split())
+
+
+def _get_page(url: str) -> str:
+    """Fetch a URL's clean text (cached). Returns '' on failure."""
+    if url in _page_cache:
+        return _page_cache[url]
+    try:
+        resp = _session.get(url, timeout=15)
+        resp.raise_for_status()
+        text = _clean_html(resp.text)
+    except Exception:
+        text = ""
+    _page_cache[url] = text
+    return text
+
 
 @tool
 def web_search(query: str) -> str:
     """Search the live web. USE FOR: news, recent events, current prices,
     anything after your training cutoff, or when you are unsure of a fact.
     DO NOT use for math or for reading a known URL. Returns titles + snippets + URLs."""
+    if query in _search_cache:                  # cache hit -> instant
+        return _search_cache[query]
     results = DDGS().text(query, max_results=3)
     if not results:
         return "No results found."
-    return "\n\n".join(
+    out = "\n\n".join(
         f"{r['title']}\n{r['body']}\n{r['href']}" for r in results
     )
+    _search_cache[query] = out
+    return out
 
 
 @tool
@@ -34,16 +73,8 @@ def fetch_url(url: str) -> str:
     """Read ONE specific webpage. USE FOR: when you already have an exact URL
     and want its text. DO NOT use to explore a site (use deep_crawl) or to
     search (use web_search). Returns the page's text."""
-    try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-    except Exception as e:
-        return f"Could not fetch {url}: {e}"
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer"]):
-        tag.decompose()
-    text = " ".join(soup.get_text(separator=" ").split())
-    return text[:2500]
+    text = _get_page(url)
+    return text[:2500] if text else f"Could not fetch {url}."
 
 
 @tool
@@ -61,7 +92,6 @@ def deep_crawl(start_url: str, max_pages: int = 8) -> str:
     except Exception:
         rp = None
 
-    headers = {"User-Agent": "Mozilla/5.0 (LearningAgent)"}
     queue = deque([start_url])
     seen = {start_url}
     pages = []
@@ -71,7 +101,7 @@ def deep_crawl(start_url: str, max_pages: int = 8) -> str:
         if rp and not rp.can_fetch("*", url):
             continue
         try:
-            resp = requests.get(url, timeout=15, headers=headers)
+            resp = _session.get(url, timeout=15)
             resp.raise_for_status()
         except Exception:
             continue
@@ -80,6 +110,7 @@ def deep_crawl(start_url: str, max_pages: int = 8) -> str:
         for tag in soup(["script", "style", "nav", "footer"]):
             tag.decompose()
         text = " ".join(soup.get_text(separator=" ").split())
+        _page_cache[url] = text                 # crawled pages feed the cache
         pages.append(f"=== {url} ===\n{text[:1500]}")
 
         for a in soup.find_all("a", href=True):
@@ -88,7 +119,7 @@ def deep_crawl(start_url: str, max_pages: int = 8) -> str:
                 seen.add(link)
                 queue.append(link)
 
-        time.sleep(1)
+        time.sleep(1)  # polite delay -> don't hammer the server
 
     if not pages:
         return f"Could not crawl {start_url} (blocked, offline, or no pages)."
@@ -129,22 +160,21 @@ def wikipedia_lookup(topic: str) -> str:
     """Look up an established fact on Wikipedia. USE FOR: definitions, history,
     science, well-known people/places. DO NOT use for recent news (use
     web_search). Returns a short summary."""
-    ua = {"User-Agent": "LearningAgent/1.0 (educational)"}
     try:
         # step 1: find the best-matching page title
-        search = requests.get(
+        search = _session.get(
             "https://en.wikipedia.org/w/api.php",
             params={"action": "opensearch", "search": topic,
                     "limit": 1, "format": "json"},
-            headers=ua, timeout=10,
+            timeout=10,
         ).json()
         if not search[1]:
             return f"No Wikipedia page for '{topic}'."
         title = search[1][0].replace(" ", "_")
         # step 2: fetch that page's summary
-        summary = requests.get(
+        summary = _session.get(
             f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}",
-            headers=ua, timeout=10,
+            timeout=10,
         ).json()
         return summary.get("extract", f"No summary available for '{topic}'.")
     except Exception as e:

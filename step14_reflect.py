@@ -4,7 +4,6 @@ Uses all 7 tools (incl. search_docs RAG)."""
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
-from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -14,8 +13,6 @@ from llm_config import get_llm
 
 from step4_tool import (web_search, fetch_url, deep_crawl, calculator,
                         wikipedia_lookup, read_file, search_docs)
-
-load_dotenv()
 
 tools = [web_search, fetch_url, deep_crawl, calculator,
          wikipedia_lookup, read_file, search_docs]

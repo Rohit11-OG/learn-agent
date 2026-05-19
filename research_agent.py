@@ -9,17 +9,15 @@ actual source pages, then writes a structured report that cites every claim.
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 
-import requests
-from bs4 import BeautifulSoup
 from ddgs import DDGS
-from dotenv import load_dotenv
-from llm_config import get_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 
-load_dotenv()
+from llm_config import get_llm        # llm_config loads .env on import
+from step4_tool import _get_page      # shared cached fetcher (session + cache)
 
 # model is configured in llm_config.py (NVIDIA NIM — Nemotron Super)
 llm = get_llm()
@@ -36,20 +34,6 @@ class State(TypedDict):
     report: str
     revisions: int
     feedback: str
-
-
-def _fetch(url: str) -> str:
-    """Download a page and return clean text (empty string on failure)."""
-    try:
-        resp = requests.get(url, timeout=12,
-                            headers={"User-Agent": "Mozilla/5.0 (ResearchAgent)"})
-        resp.raise_for_status()
-    except Exception:
-        return ""
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "header"]):
-        tag.decompose()
-    return " ".join(soup.get_text(separator=" ").split())[:3000]
 
 
 # --- node 1: plan -> break the question into sub-questions ---
@@ -89,10 +73,13 @@ def research(state: State):
             sources.append({"title": r.get("title", ""), "url": url,
                             "snippet": r.get("body", ""), "content": ""})
 
-    # read the full text of the first few sources
-    for s in sources[:MAX_SOURCES_FETCHED]:
-        print(f"[read] {s['url']}")
-        s["content"] = _fetch(s["url"])
+    # read the full text of the first few sources -- IN PARALLEL
+    to_read = sources[:MAX_SOURCES_FETCHED]
+    print(f"[reading {len(to_read)} sources in parallel...]")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        texts = pool.map(lambda s: _get_page(s["url"]), to_read)
+    for s, text in zip(to_read, texts):
+        s["content"] = text[:3000]
 
     print(f"RESEARCH — collected {len(sources)} sources")
     return {"sources": sources}

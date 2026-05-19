@@ -6,7 +6,6 @@ sys.stdout.reconfigure(encoding="utf-8")
 from operator import add
 from typing import Annotated, TypedDict
 
-from dotenv import load_dotenv
 from llm_config import get_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
@@ -14,7 +13,6 @@ from langgraph.types import Send  # the fan-out primitive
 
 from step9_agent import app as research_agent
 
-load_dotenv()
 llm = get_llm()
 
 

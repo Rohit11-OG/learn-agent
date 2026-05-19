@@ -3,7 +3,6 @@
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
-from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, START, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -13,8 +12,6 @@ from llm_config import get_llm
 
 from step4_tool import (web_search, fetch_url, calculator, wikipedia_lookup,
                         read_file, deep_crawl)
-
-load_dotenv()
 
 tools = [web_search, fetch_url, calculator, wikipedia_lookup, read_file, deep_crawl]
 llm = get_llm()
