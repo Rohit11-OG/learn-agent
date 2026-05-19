@@ -1,14 +1,12 @@
 # learn-agent
 
-A hands-on project for learning how **AI agents** work, built step by step with
-[LangGraph](https://www.langchain.com/langgraph) and the free [Groq](https://groq.com) API.
+A **research agent** built with [LangGraph](https://www.langchain.com/langgraph)
+and the [NVIDIA NIM](https://build.nvidia.com) API.
 
-It is a **research assistant** agent: give it a question, and it decides which
-tools to use (web search, Wikipedia, a calculator, a web crawler, and more),
-gathers information, and writes an answer.
-
-The repo grows in numbered steps — each file is a slightly more advanced agent,
-so the code reads like a tutorial.
+Give it a question — it decides which tools to use (web search, web crawler,
+Wikipedia, a calculator, a local knowledge base), gathers information, reviews
+its own answer, and replies. It also has a dedicated **research pipeline** that
+produces structured, source-cited reports.
 
 ---
 
@@ -27,13 +25,13 @@ goal over many steps and corrects itself along the way.
 ## Features
 
 - **7 tools** the agent can choose from
-- **Single-agent** ReAct loop and **multi-agent** architectures
 - **Reflection** — the agent reviews and revises its own answers
-- **RAG** — searches a local knowledge base by meaning
-- **Streaming** — answers print token-by-token
-- **Memory** within a conversation (per-thread)
-- Error handling, retry on bad tool calls, and loop guards
-- 100% free stack — no paid API, no credit card
+- **RAG** — semantic search over a local knowledge base
+- **Research pipeline** — plan → search → read sources → cited report
+- **Web UI** — a Gradio chat app
+- **Memory** within a conversation (per session)
+- Caching, connection pooling, parallel fetching for speed
+- Error handling, retries, and loop guards
 
 ---
 
@@ -51,19 +49,13 @@ goal over many steps and corrects itself along the way.
 
 ---
 
-## Agent variants
+## The files
 
-Each file is runnable on its own and shows a different architecture.
-
-| File | Architecture |
-|------|--------------|
-| `step9_agent.py` | Single ReAct agent — the core loop |
-| `step10_multiagent.py` | Linear multi-agent — planner → researcher → writer |
-| `step11_supervisor.py` | Supervisor — a boss LLM dynamically routes to workers |
-| `step12_parallel.py` | Parallel — subtasks fan out and run at the same time |
-| `step13_streaming.py` | Streaming — token-by-token output |
-| `step14_reflect.py` | **Reflection agent** — 7 tools + self-review (most complete) |
-| `step4_tool.py` | Shared tool definitions used by all of the above |
+| File | What it is |
+|------|------------|
+| `agent.py` | Model config + the 7 tools + the reflection agent + the web UI |
+| `research_agent.py` | Research pipeline — produces a cited, structured report |
+| `knowledge/` | Documents the `search_docs` (RAG) tool searches |
 
 ---
 
@@ -83,13 +75,14 @@ python -m venv venv
 venv\Scripts\pip install -r requirements.txt
 ```
 
-**4. Add your Groq API key.** Create a file named `.env` in the project root:
+**4. Add your NVIDIA NIM API key.** Create a file named `.env` in the project root:
 
 ```
-GROQ_API_KEY=your-key-here
+NVIDIA_API_KEY=nvapi-your-key-here
 ```
 
-Get a free key (no credit card) at [console.groq.com](https://console.groq.com).
+Get a free key (no credit card) at [build.nvidia.com](https://build.nvidia.com)
+— sign up for the NVIDIA Developer Program and generate an API key.
 
 > The `.env` file is git-ignored — your key never gets committed.
 
@@ -97,27 +90,25 @@ Get a free key (no credit card) at [console.groq.com](https://console.groq.com).
 
 ## Usage
 
-Run any agent variant. The most complete one:
+**Web UI** (chat in the browser):
 
 ```bash
-venv\Scripts\python step14_reflect.py
+venv\Scripts\python agent.py
 ```
 
-Then ask questions, for example:
+Then open the local URL it prints (http://127.0.0.1:7860).
 
-```
-You: What is the latest version of Python?
-You: What is 17% of 4830?
-You: Crawl https://example.com and summarize it
-```
+**Research pipeline** (cited report in the terminal):
 
-Type `quit` to exit.
+```bash
+venv\Scripts\python research_agent.py
+```
 
 ---
 
 ## How it works
 
-The agent is built as a **graph** in LangGraph:
+The reflection agent is a **graph** in LangGraph:
 
 ```
 START → agent ──(needs a tool?)──► tools ──► agent
@@ -129,14 +120,28 @@ START → agent ──(needs a tool?)──► tools ──► agent
 - **Nodes** — functions: call the model, run a tool, review the answer
 - **Edges** — fixed or conditional arrows that route between nodes
 
+The research pipeline runs a different graph:
+`plan → research → synthesize → review → (revise | done)`.
+
+---
+
+## Model
+
+Configured in `agent.py` — change one line to swap:
+
+```python
+MODEL = "nvidia/nemotron-3-super-120b-a12b"  # NVIDIA NIM — Nemotron Super
+```
+
 ---
 
 ## Tech stack
 
 - **LangGraph** — agent orchestration (the graph and loop)
 - **LangChain** — model wrappers, tools, messages
-- **Groq** — free, fast LLM inference (`openai/gpt-oss-20b`)
+- **NVIDIA NIM** — LLM inference (Nemotron Super)
 - **FastEmbed** — local, free embeddings for RAG
+- **Gradio** — the web UI
 - **BeautifulSoup / requests** — web fetching and crawling
 
 ---
@@ -145,16 +150,11 @@ START → agent ──(needs a tool?)──► tools ──► agent
 
 ```
 learn-agent/
-├── step4_tool.py          # all 7 tool definitions
-├── step9_agent.py         # single ReAct agent
-├── step10_multiagent.py   # linear multi-agent
-├── step11_supervisor.py   # supervisor routing
-├── step12_parallel.py     # parallel fan-out
-├── step13_streaming.py    # streaming output
-├── step14_reflect.py      # reflection agent (main)
-├── knowledge/             # docs for the RAG tool
+├── agent.py            # model + tools + reflection agent + web UI
+├── research_agent.py   # research pipeline (cited reports)
+├── knowledge/          # docs for the RAG tool
 ├── requirements.txt
-└── .env                   # your API key (git-ignored)
+└── .env                # your API key (git-ignored)
 ```
 
 ---
