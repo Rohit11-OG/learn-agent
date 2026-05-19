@@ -16,10 +16,9 @@ from ddgs import DDGS
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 
-from llm_config import get_llm        # llm_config loads .env on import
-from step4_tool import _get_page      # shared cached fetcher (session + cache)
+from agent import get_llm, _get_page  # reuse model config + cached fetcher
 
-# model is configured in llm_config.py (NVIDIA NIM — Nemotron Super)
+# model is configured in agent.py (NVIDIA NIM — Nemotron Super)
 llm = get_llm()
 
 MAX_SUBQUESTIONS = 5
