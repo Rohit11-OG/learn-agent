@@ -15,7 +15,6 @@ import operator
 import os
 import sys
 import time
-import uuid
 from collections import deque
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -77,19 +76,21 @@ def _get_page(url: str) -> str:
 
     Uses trafilatura, the best-in-class article extractor — drops nav, ads,
     cookie banners, footers. Falls back to BeautifulSoup if trafilatura fails.
+    Network failures are NOT cached -> transient errors get a retry next time.
     """
     if url in _page_cache:
         return _page_cache[url]
     try:
         resp = _session.get(url, timeout=15)
         resp.raise_for_status()
-        text = trafilatura.extract(
-            resp.text, include_comments=False, include_tables=True
-        ) or _clean_html(resp.text)
     except Exception:
-        text = ""
-    _page_cache[url] = text or ""
-    return text or ""
+        return ""  # don't cache network/HTTP failures
+    text = (trafilatura.extract(resp.text, include_comments=False,
+                                include_tables=True)
+            or _clean_html(resp.text)
+            or "")
+    _page_cache[url] = text
+    return text
 
 
 def _get_browser():
@@ -264,6 +265,7 @@ def js_crawl(start_url: str, max_pages: int = 5) -> str:
                     and full not in seen):
                 seen.add(full)
                 queue.append(full)
+        time.sleep(0.5)  # polite delay -> don't hammer the server
 
     if not pages:
         return f"Could not js_crawl {start_url} (blocked or offline)."
@@ -474,83 +476,15 @@ def ask(question: str, thread_id: str = "default") -> str:
 
 
 # ============================================================
-# 4. WEB UI  — only built when this file is run directly
+# 4. CLI fallback  — for quick testing without the web UI
 # ============================================================
+# For the Claude-style web UI, run `python app.py` instead.
 if __name__ == "__main__":
-    import gradio as gr
-
-    TOOL_PANEL = "### 🛠️ Tools\n" + "\n".join(
-        f"- **{t.name}** — {t.description.split('.')[0].strip()}." for t in tools
-    )
-
-    def bot_reply(chat_history, session_id):
-        """Stream the agent's response into the last (empty) assistant message."""
-        message = chat_history[-1]["content"]
-        config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
-        chat_history = chat_history + [{"role": "assistant", "content": ""}]
-
-        log, answer = "", ""
-        try:
-            for step in app.stream(
-                {"messages": [HumanMessage(message)], "review_count": 0},
-                config, stream_mode="values",
-            ):
-                last = step["messages"][-1]
-                if last.type == "ai" and last.tool_calls:
-                    names = ", ".join(tc["name"] for tc in last.tool_calls)
-                    log += f"🔧 {names}\n"
-                    chat_history[-1]["content"] = f"{log}\n_thinking..._"
-                    yield chat_history
-                elif last.type == "ai" and last.content:
-                    answer = last.content
-                    chat_history[-1]["content"] = f"{log}\n\n{answer}".strip()
-                    yield chat_history
-        except Exception as e:
-            chat_history[-1]["content"] = f"⚠️ Error: {e}"
-            yield chat_history
-            return
-
-        chat_history[-1]["content"] = f"{log}\n\n{answer}".strip() or "(no answer)"
-        yield chat_history
-
-    def user_submit(message, chat_history):
-        if not message.strip():
-            return "", chat_history
-        return "", chat_history + [{"role": "user", "content": message}]
-
-    def new_chat():
-        return [], str(uuid.uuid4())
-
-    with gr.Blocks(title="Research Agent") as demo:
-        gr.Markdown(
-            "# 🔎 Research Agent\n"
-            "A LangGraph agent that searches the web, reads pages, does math, "
-            "checks Wikipedia, and reviews its own answers."
-        )
-        session = gr.State(lambda: str(uuid.uuid4()))
-
-        with gr.Row():
-            with gr.Column(scale=3):
-                chatbot = gr.Chatbot(height=460)
-                msg = gr.Textbox(placeholder="Ask anything...", show_label=False,
-                                 autofocus=True)
-                with gr.Row():
-                    send = gr.Button("Send", variant="primary")
-                    clear = gr.Button("🔄 New Chat")
-            with gr.Column(scale=1):
-                gr.Markdown(TOOL_PANEL)
-
-        gr.Examples(
-            examples=["What is the latest version of Python?",
-                      "What is 17% of 4830?",
-                      "Tell me about black holes",
-                      "What model does this project use?"],
-            inputs=msg,
-        )
-
-        for trigger in (msg.submit, send.click):
-            trigger(user_submit, [msg, chatbot], [msg, chatbot]).then(
-                bot_reply, [chatbot, session], chatbot)
-        clear.click(new_chat, None, [chatbot, session])
-
-    demo.launch(theme=gr.themes.Soft())
+    print("Quick CLI mode. For the web UI, run:  python app.py")
+    print("Type 'quit' to exit.\n")
+    while True:
+        q = input("You: ").strip()
+        if q.lower() in {"quit", "exit", "q"}:
+            break
+        if q:
+            print("\nAgent:", ask(q), "\n")
