@@ -53,7 +53,8 @@ goal over many steps and corrects itself along the way.
 
 | File | What it is |
 |------|------------|
-| `agent.py` | Model config + the 7 tools + the reflection agent + the web UI |
+| `agent.py` | Model config + the 9 tools + the reflection agent (library + CLI) |
+| `app.py` | Claude-style Gradio web UI on top of `agent.py` |
 | `research_agent.py` | Research pipeline — produces a cited, structured report |
 | `knowledge/` | Documents the `search_docs` (RAG) tool searches |
 
@@ -90,10 +91,10 @@ Get a free key (no credit card) at [build.nvidia.com](https://build.nvidia.com)
 
 ## Usage
 
-**Web UI** (chat in the browser):
+**Web UI** (chat in the browser — Claude-style design):
 
 ```bash
-venv\Scripts\python agent.py
+venv\Scripts\python app.py
 ```
 
 Then open the local URL it prints (http://127.0.0.1:7860).
@@ -102,6 +103,12 @@ Then open the local URL it prints (http://127.0.0.1:7860).
 
 ```bash
 venv\Scripts\python research_agent.py
+```
+
+**Quick CLI** (terminal chat, no UI):
+
+```bash
+venv\Scripts\python agent.py
 ```
 
 ---
@@ -150,7 +157,8 @@ MODEL = "nvidia/nemotron-3-super-120b-a12b"  # NVIDIA NIM — Nemotron Super
 
 ```
 learn-agent/
-├── agent.py            # model + tools + reflection agent + web UI
+├── agent.py            # model + tools + reflection agent
+├── app.py              # Claude-style Gradio web UI
 ├── research_agent.py   # research pipeline (cited reports)
 ├── knowledge/          # docs for the RAG tool
 ├── requirements.txt
