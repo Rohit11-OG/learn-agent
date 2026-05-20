@@ -10,6 +10,7 @@ Sections:
 """
 
 import ast
+import atexit
 import operator
 import os
 import sys
@@ -20,6 +21,7 @@ from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import requests
+import trafilatura
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from dotenv import load_dotenv
@@ -56,9 +58,14 @@ _session.headers.update({"User-Agent": "Mozilla/5.0 (LearningAgent)"})
 _search_cache: dict[str, str] = {}
 _page_cache: dict[str, str] = {}
 
+# shared headless browser, launched lazily and reused across calls
+# -> Chromium startup is the slow part (~3s); reusing it makes JS rendering fast
+_browser = None
+_playwright_ctx = None
+
 
 def _clean_html(html: str, drop_extra=()) -> str:
-    """Strip tags/noise from HTML, return squashed plain text."""
+    """Strip tags/noise from HTML, return squashed plain text (fallback path)."""
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", *drop_extra]):
         tag.decompose()
@@ -66,17 +73,65 @@ def _clean_html(html: str, drop_extra=()) -> str:
 
 
 def _get_page(url: str) -> str:
-    """Fetch a URL's clean text (cached). Returns '' on failure."""
+    """Fetch a URL's main content as clean text (cached). Returns '' on failure.
+
+    Uses trafilatura, the best-in-class article extractor — drops nav, ads,
+    cookie banners, footers. Falls back to BeautifulSoup if trafilatura fails.
+    """
     if url in _page_cache:
         return _page_cache[url]
     try:
         resp = _session.get(url, timeout=15)
         resp.raise_for_status()
-        text = _clean_html(resp.text)
+        text = trafilatura.extract(
+            resp.text, include_comments=False, include_tables=True
+        ) or _clean_html(resp.text)
     except Exception:
         text = ""
-    _page_cache[url] = text
-    return text
+    _page_cache[url] = text or ""
+    return text or ""
+
+
+def _get_browser():
+    """Lazily launch Chromium once; reuse across all JS-render calls."""
+    global _browser, _playwright_ctx
+    if _browser is None:
+        from playwright.sync_api import sync_playwright
+        _playwright_ctx = sync_playwright().start()
+        _browser = _playwright_ctx.chromium.launch(headless=True)
+    return _browser
+
+
+def _render_js(url: str, timeout_ms: int = 30000) -> tuple[str, list[str]]:
+    """Render a URL in the shared browser. Returns (visible text, links)."""
+    browser = _get_browser()
+    page = browser.new_page()
+    try:
+        page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+        text = page.inner_text("body")
+        links = [a.get_attribute("href") for a in page.query_selector_all("a")]
+        links = [link for link in links if link]
+    finally:
+        page.close()
+    return text, links
+
+
+def _cleanup_browser():
+    """Close the shared browser on Python exit."""
+    global _browser, _playwright_ctx
+    try:
+        if _browser is not None:
+            _browser.close()
+    except Exception:
+        pass
+    try:
+        if _playwright_ctx is not None:
+            _playwright_ctx.stop()
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_browser)
 
 
 @tool
@@ -100,9 +155,38 @@ def web_search(query: str) -> str:
 def fetch_url(url: str) -> str:
     """Read ONE specific webpage. USE FOR: when you already have an exact URL
     and want its text. DO NOT use to explore a site (use deep_crawl) or to
-    search (use web_search). Returns the page's text."""
+    search (use web_search). Auto-falls back to a headless browser if the
+    static fetch returns too little content (so JS-rendered sites still work).
+    Returns the page's text."""
     text = _get_page(url)
-    return text[:2500] if text else f"Could not fetch {url}."
+    # too little content -> probably JS-rendered. Auto-escalate.
+    if len(text) < 300:
+        try:
+            js_text, _ = _render_js(url)
+            if len(js_text) > len(text):
+                text = js_text
+                _page_cache[url] = text
+        except Exception:
+            pass
+    return text[:3000] if text else f"Could not fetch {url}."
+
+
+@tool
+def js_fetch(url: str) -> str:
+    """Force a JavaScript render. Returns the page's visible text + its links.
+    USE FOR: when you explicitly need browser-rendered output, or when
+    fetch_url's auto-fallback was not enough. Slightly slower than fetch_url."""
+    cache_key = f"js::{url}"
+    if cache_key in _page_cache:
+        return _page_cache[cache_key]
+    try:
+        text, links = _render_js(url)
+    except Exception as e:
+        return f"Could not render {url}: {e}"
+    links = [link for link in links if link.startswith("http")][:20]
+    out = f"{text[:3000]}\n\nLinks found:\n" + "\n".join(links)
+    _page_cache[cache_key] = out
+    return out
 
 
 @tool
@@ -152,6 +236,38 @@ def deep_crawl(start_url: str, max_pages: int = 8) -> str:
     if not pages:
         return f"Could not crawl {start_url} (blocked, offline, or no pages)."
     return f"Crawled {len(pages)} pages:\n\n" + "\n\n".join(pages)
+
+
+@tool
+def js_crawl(start_url: str, max_pages: int = 5) -> str:
+    """Crawl a JavaScript-rendered website (React, Next.js, Vercel, SPAs).
+    USE FOR: multi-page exploration of a JS site where deep_crawl returns
+    nothing. Same-domain only, max_pages capped at 10. Slower than deep_crawl
+    but sees what a real browser sees."""
+    max_pages = min(max_pages, 10)
+    domain = urlparse(start_url).netloc
+    queue = deque([start_url])
+    seen = {start_url}
+    pages = []
+
+    while queue and len(pages) < max_pages:
+        url = queue.popleft()
+        try:
+            text, links = _render_js(url, timeout_ms=20000)
+        except Exception:
+            continue
+        pages.append(f"=== {url} ===\n{text[:1500]}")
+
+        for link in links:
+            full = urljoin(url, link).split("#")[0]
+            if (full.startswith("http") and urlparse(full).netloc == domain
+                    and full not in seen):
+                seen.add(full)
+                queue.append(full)
+
+    if not pages:
+        return f"Could not js_crawl {start_url} (blocked or offline)."
+    return f"JS-crawled {len(pages)} pages:\n\n" + "\n\n".join(pages)
 
 
 # safe calculator (no python eval -> eval is a security hole)
@@ -263,15 +379,22 @@ def search_docs(query: str) -> str:
 # ============================================================
 # 3. AGENT  — reflection agent: answers, reviews itself, revises
 # ============================================================
-tools = [web_search, fetch_url, deep_crawl, calculator,
+tools = [web_search, fetch_url, js_fetch, deep_crawl, js_crawl, calculator,
          wikipedia_lookup, read_file, search_docs]
 llm = get_llm()
 llm_with_tools = llm.bind_tools(tools)
 
 SYSTEM = SystemMessage(
-    "You are a research assistant. Tools: web_search, fetch_url, deep_crawl, "
-    "calculator, wikipedia_lookup, read_file, search_docs (project knowledge base). "
-    "Pick the right tool per its description. Answer clearly, citing what you found."
+    "You are a research assistant. Tools: web_search, fetch_url (auto-handles "
+    "JS sites), js_fetch (force JS render), deep_crawl (multi-page static), "
+    "js_crawl (multi-page JS), calculator, wikipedia_lookup, read_file, "
+    "search_docs (project knowledge base). Pick the right tool per its "
+    "description. Prefer fetch_url first; if a site needs many pages, choose "
+    "deep_crawl or js_crawl. "
+    "STRICT LIMITS: use at most 4 tool calls per question, then ANSWER. Do "
+    "NOT repeat the same tool call. If a tool returned content, USE that "
+    "content — do not refetch. After you have enough information, write the "
+    "final answer immediately. Cite what you found."
 )
 
 MAX_REVIEWS = 2  # how many times the agent may revise
@@ -344,7 +467,7 @@ app = _graph.compile(checkpointer=InMemorySaver())  # the runnable agent
 
 def ask(question: str, thread_id: str = "default") -> str:
     """Run the agent on one question and return the final answer text."""
-    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 30}
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
     result = app.invoke({"messages": [HumanMessage(question)], "review_count": 0},
                         config)
     return result["messages"][-1].content
@@ -363,7 +486,7 @@ if __name__ == "__main__":
     def bot_reply(chat_history, session_id):
         """Stream the agent's response into the last (empty) assistant message."""
         message = chat_history[-1]["content"]
-        config = {"configurable": {"thread_id": session_id}, "recursion_limit": 30}
+        config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
         chat_history = chat_history + [{"role": "assistant", "content": ""}]
 
         log, answer = "", ""
